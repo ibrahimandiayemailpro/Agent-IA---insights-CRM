@@ -48,6 +48,21 @@ Action / Pourquoi / Échéance, risques et qualité des données. Aucun autre on
 Le compte de service doit être **Éditeur** du Sheet (Lecteur ne suffit plus). Ne renommez pas l'onglet en y mettant
 vos propres notes : il est écrasé à chaque exécution.
 
+## Exécution automatique tous les jours à 9h
+
+Le workflow `.github/workflows/daily-briefing.yml` remplit l'onglet « Actions prioritaires » chaque jour à 9h
+(UTC = heure de Dakar). Configuration, dans *Settings > Secrets and variables > Actions* du dépôt :
+
+| Nom | Type | Valeur |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | secret | clé API Anthropic |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | secret | contenu complet du JSON du compte de service (Éditeur du Sheet) |
+| `CRM_SHEET_ID` | secret | ID du Sheet (la partie entre `/d/` et `/edit` de l'URL) |
+| `CRM_OWNER` | variable (optionnel) | ex. `Ibrahima` pour ne traiter que vos entreprises |
+
+Important : GitHub ne déclenche les tâches planifiées que depuis la **branche par défaut** ; fusionnez-y cette branche.
+Test immédiat : onglet *Actions > Actions prioritaires CRM > Run workflow*. Les logs n'affichent jamais le contenu du CRM.
+
 ## À adapter
 
 - `CLOSED_WORDS` (`sheet.py`) : mots désignant une affaire terminée. Seuls « A contacter », « En veille / Pause » et
