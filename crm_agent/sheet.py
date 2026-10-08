@@ -1,4 +1,4 @@
-"""Lecture du Google Sheet (ou d'un CSV) et normalisation des colonnes du CRM."""
+"""Lecture du CRM « partenariats » (onglets Pipeline, Tâches, Contacts, Notes) et jointure par ID entreprise."""
 from __future__ import annotations
 
 import csv
@@ -6,26 +6,17 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from pathlib import Path
 
-# Nom canonique -> alias acceptés (en-têtes normalisés : minuscules, sans accents).
-ALIASES: dict[str, list[str]] = {
-    "name": ["nom", "name", "contact", "client", "prospect", "nom du contact"],
-    "company": ["entreprise", "societe", "company", "organisation"],
-    "stage": ["etape", "statut", "status", "stage", "phase", "pipeline"],
-    "amount": ["montant", "valeur", "amount", "value", "ca potentiel", "budget"],
-    "last_contact": ["dernier contact", "derniere interaction", "last contact", "date dernier contact"],
-    "next_action": ["prochaine action", "next action", "action suivante", "next step"],
-    "next_action_date": ["date prochaine action", "echeance", "next action date", "date relance", "relance"],
-    "owner": ["responsable", "owner", "commercial", "assigne a"],
-    "notes": ["notes", "commentaires", "commentaire", "comments", "remarques"],
-}
-
-CLOSED_WORDS = ("gagne", "won", "perdu", "lost", "clos", "closed", "abandon")
+TABS = ("Pipeline", "Tâches", "Contacts", "Notes")
 DATE_FORMATS = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y", "%d.%m.%Y")
+# Statuts d'une affaire terminée (comparés sans accents ni casse). À adapter à vos statuts.
+CLOSED_WORDS = ("signe", "conclu", "refus", "decline", "perdu", "abandon", "termine", "archive", "clos")
+DECISION_ROLES = ("directeur", "directrice", "dg", "ceo", "pdg", "president", "responsable", "head", "chef", "fondateur", "drh")
 
 
-def _norm(text: str) -> str:
-    text = unicodedata.normalize("NFD", str(text)).encode("ascii", "ignore").decode()
+def norm(text: object) -> str:
+    text = unicodedata.normalize("NFD", str(text or "")).encode("ascii", "ignore").decode()
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
@@ -39,86 +30,143 @@ def parse_date(value: str) -> date | None:
     return None
 
 
-def parse_amount(value: str) -> float | None:
-    cleaned = re.sub(r"[^\d,.\-]", "", (value or "").replace(" ", "").replace(" ", ""))
-    if not cleaned:
-        return None
-    if "," in cleaned and "." in cleaned:
-        cleaned = cleaned.replace(".", "").replace(",", ".")
-    else:
-        cleaned = cleaned.replace(",", ".")
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
+@dataclass
+class Task:
+    id: str
+    title: str
+    type: str
+    priority: str
+    due: date | None
+    status: str
+    owner: str
+
+    @property
+    def is_open(self) -> bool:
+        return norm(self.status) in ("a faire", "en cours")
 
 
 @dataclass
-class Deal:
-    row: int  # numéro de ligne dans la feuille (en-tête = ligne 1)
-    name: str = ""
-    company: str = ""
-    stage: str = ""
-    amount: float | None = None
-    last_contact: date | None = None
-    next_action: str = ""
-    next_action_date: date | None = None
+class Note:
+    date: date | None
+    type: str
+    text: str
+    author: str
+
+
+@dataclass
+class Contact:
+    name: str
+    role: str
+    has_mail: bool
+    has_phone: bool
+
+    @property
+    def is_decision_maker(self) -> bool:
+        return any(w in norm(self.role).split() or w in norm(self.role) for w in DECISION_ROLES)
+
+
+@dataclass
+class Company:
+    id: str
+    name: str
+    domain: str = ""
+    sector: str = ""
+    added: date | None = None
+    status: str = ""
     owner: str = ""
-    notes: str = ""
-    extra: dict[str, str] = field(default_factory=dict)  # colonnes non reconnues
+    source: str = ""
+    tasks: list[Task] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
+    contacts: list[Contact] = field(default_factory=list)
 
     @property
     def is_closed(self) -> bool:
-        return any(w in _norm(self.stage) for w in CLOSED_WORDS)
+        return any(w in norm(self.status) for w in CLOSED_WORDS)
 
 
-def rows_to_deals(rows: list[list[str]]) -> list[Deal]:
-    """`rows` = valeurs brutes, première ligne = en-têtes. Les lignes vides sont ignorées."""
-    if not rows:
-        return []
-    headers = [_norm(h) for h in rows[0]]
-    mapping: dict[int, str] = {}
-    for idx, h in enumerate(headers):
-        for canon, aliases in ALIASES.items():
-            if h in aliases and canon not in mapping.values():
-                mapping[idx] = canon
-                break
+def _table(rows: list[list[str]], must_have: tuple[str, ...]) -> list[dict[str, str]]:
+    """Trouve la ligne d'en-tête (parmi les 6 premières) et renvoie des dicts {en-tête normalisé: valeur}.
+    En cas d'en-têtes dupliqués (vue de recherche à droite du Pipeline), la 1re occurrence gagne."""
+    for h_idx, row in enumerate(rows[:6]):
+        headers = [norm(c) for c in row]
+        if all(m in headers for m in must_have):
+            break
+    else:
+        raise ValueError(f"En-tête introuvable (colonnes attendues : {must_have})")
+    out = []
+    for raw in rows[h_idx + 1:]:
+        rec: dict[str, str] = {}
+        for h, cell in zip(headers, raw):
+            if h and h not in rec:
+                rec[h] = str(cell).strip()
+        if rec.get(must_have[0]):
+            out.append(rec)
+    return out
 
-    deals: list[Deal] = []
-    for line_no, raw in enumerate(rows[1:], start=2):
-        if not any(c.strip() for c in raw):
+
+def build_companies(tabs: dict[str, list[list[str]]]) -> list[Company]:
+    companies = {}
+    for r in _table(tabs["Pipeline"], ("id", "nom de l'entreprise", "statut")):
+        if not r["id"].upper().startswith("ENT"):
             continue
-        deal = Deal(row=line_no)
-        for idx, cell in enumerate(raw):
-            cell = cell.strip()
-            canon = mapping.get(idx)
-            if canon in ("last_contact", "next_action_date"):
-                setattr(deal, canon, parse_date(cell))
-            elif canon == "amount":
-                deal.amount = parse_amount(cell)
-            elif canon:
-                setattr(deal, canon, cell)
-            elif cell and idx < len(rows[0]) and rows[0][idx].strip():
-                deal.extra[rows[0][idx].strip()] = cell
-        deals.append(deal)
-    return deals
+        companies[r["id"]] = Company(
+            id=r["id"], name=r.get("nom de l'entreprise", ""), domain=r.get("nom de domaine", ""),
+            sector=r.get("secteur - domaine", ""), added=parse_date(r.get("date d'ajout", "")),
+            status=r.get("statut", ""), owner=r.get("personne en charge", ""), source=r.get("source", ""),
+        )
+
+    # Les en-têtes de l'onglet Tâches contiennent parfois une coquille sur la colonne ID : on s'appuie sur « id entreprise ».
+    for r in _table(tabs["Tâches"], ("id entreprise", "statut")):
+        c = companies.get(r["id entreprise"])
+        if c:
+            first_col = next(iter(r.values()))
+            c.tasks.append(Task(first_col, r.get("tache", ""), r.get("type", ""), r.get("priorite", ""),
+                                parse_date(r.get("echeance", "")), r.get("statut", ""), r.get("personne en charge", "")))
+    for r in _table(tabs["Contacts"], ("id entreprise", "nom du contact")):
+        c = companies.get(r["id entreprise"])
+        if c:
+            c.contacts.append(Contact(r["nom du contact"], r.get("role", ""), bool(r.get("mail")), bool(r.get("telephone"))))
+    for r in _table(tabs["Notes"], ("id entreprise", "note")):
+        c = companies.get(r["id entreprise"])
+        if c:
+            c.notes.append(Note(parse_date(r.get("date", "")), r.get("type", ""), r.get("note", ""), r.get("auteur", "")))
+    for c in companies.values():
+        c.notes.sort(key=lambda n: n.date or date.min)
+    return list(companies.values())
 
 
-def load_csv(path: str) -> list[Deal]:
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        return rows_to_deals([list(r) for r in csv.reader(f)])
+# --- Sources -----------------------------------------------------------------------------------
+
+def _cell(v: object) -> str:
+    if isinstance(v, datetime):
+        return v.strftime("%d/%m/%Y")
+    if isinstance(v, date):
+        return v.strftime("%d/%m/%Y")
+    return "" if v is None else str(v)
 
 
-def load_google_sheet(spreadsheet: str, worksheet: str | None, credentials_path: str | None) -> list[Deal]:
-    """`spreadsheet` = URL, ID ou titre. Auth par compte de service (la feuille doit lui être partagée)."""
+def load_xlsx(path: str) -> list[Company]:
+    """Export du Sheet : Fichier > Télécharger > Microsoft Excel (.xlsx)."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, data_only=True, read_only=True)
+    tabs = {name: [[_cell(c) for c in row] for row in wb[name].iter_rows(values_only=True)] for name in TABS}
+    return build_companies(tabs)
+
+
+def load_csv_dir(directory: str) -> list[Company]:
+    """Dossier contenant Pipeline.csv, Tâches.csv, Contacts.csv, Notes.csv."""
+    tabs = {}
+    for name in TABS:
+        with open(Path(directory) / f"{name}.csv", newline="", encoding="utf-8-sig") as f:
+            tabs[name] = [list(r) for r in csv.reader(f)]
+    return build_companies(tabs)
+
+
+def load_google_sheet(spreadsheet: str, credentials_path: str | None) -> list[Company]:
+    """`spreadsheet` = URL ou ID. Auth par compte de service (la feuille doit lui être partagée)."""
     import gspread
 
     gc = gspread.service_account(filename=credentials_path) if credentials_path else gspread.service_account()
-    if spreadsheet.startswith("http"):
-        book = gc.open_by_url(spreadsheet)
-    elif re.fullmatch(r"[\w-]{30,}", spreadsheet):
-        book = gc.open_by_key(spreadsheet)
-    else:
-        book = gc.open(spreadsheet)
-    ws = book.worksheet(worksheet) if worksheet else book.sheet1
-    return rows_to_deals(ws.get_all_values())
+    book = gc.open_by_url(spreadsheet) if spreadsheet.startswith("http") else gc.open_by_key(spreadsheet)
+    return build_companies({name: book.worksheet(name).get_all_values() for name in TABS})

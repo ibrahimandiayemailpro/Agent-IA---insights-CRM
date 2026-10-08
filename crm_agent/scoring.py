@@ -1,56 +1,77 @@
-"""Pré-analyse déterministe : calcule des signaux fiables avant de solliciter le LLM."""
+"""Pré-analyse déterministe : signaux fiables calculés avant de solliciter le LLM."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
 
-from .sheet import Deal
+from .sheet import Company, norm
 
-STALE_DAYS = 14  # sans contact au-delà => deal "froid"
+STALE_DAYS = 14  # sans interaction au-delà => affaire qui refroidit
+
+# Poids de l'étape : plus l'affaire est avancée, plus elle mérite d'attention. Statuts inconnus => 10.
+STATUS_WEIGHT = {"en negociation": 30, "en discussion": 25, "rendez-vous": 22, "rdv": 22, "a contacter": 12,
+                 "contacte": 15, "en veille": 3, "pause": 3}
 
 
 @dataclass
 class Signals:
-    deal: Deal
-    days_since_contact: int | None
-    days_overdue: int | None  # >0 : action en retard
+    company: Company
+    days_since_interaction: int | None
+    open_tasks: int
+    overdue_tasks: int
+    max_overdue_days: int
     flags: list[str]
-    score: float  # heuristique 0-100, sert à présélectionner et à départager
+    score: float
 
 
-def analyze(deal: Deal, today: date, max_amount: float) -> Signals:
+def _status_weight(status: str) -> int:
+    s = norm(status)
+    for key, w in STATUS_WEIGHT.items():
+        if key in s:
+            return w
+    return 10
+
+
+def analyze(c: Company, today: date) -> Signals:
     flags: list[str] = []
-    score = 0.0
+    score = float(_status_weight(c.status))
 
-    since = (today - deal.last_contact).days if deal.last_contact else None
-    overdue = (today - deal.next_action_date).days if deal.next_action_date else None
+    dated = [n.date for n in c.notes if n.date]
+    last = max(dated) if dated else None
+    ref = last or c.added
+    since = (today - ref).days if ref else None
+    if since is not None and since > STALE_DAYS:
+        label = "dernière interaction" if last else "ajoutée sans aucune interaction"
+        flags.append(f"{label} il y a {since} j")
+        score += min(25, since - STALE_DAYS + 8)
 
-    if overdue is not None and overdue > 0:
-        flags.append(f"action en retard de {overdue} j")
-        score += min(40, 15 + overdue * 2)
-    elif overdue is not None and overdue >= -2:
-        flags.append("échéance imminente")
-        score += 20
-
-    if since is None:
-        flags.append("aucun contact enregistré")
+    open_tasks = [t for t in c.tasks if t.is_open]
+    overdue = [t for t in open_tasks if t.due and t.due < today]
+    max_over = max(((today - t.due).days for t in overdue), default=0)
+    if overdue:
+        flags.append(f"{len(overdue)} tâche(s) en retard (jusqu'à {max_over} j)")
+        score += min(30, 10 + max_over // 3 + 3 * len(overdue))
+    soon = [t for t in open_tasks if t.due and 0 <= (t.due - today).days <= 3]
+    if soon:
+        flags.append(f"{len(soon)} tâche(s) à échéance sous 3 j")
+        score += 12
+    if not open_tasks and not c.is_closed and norm(c.status) not in ("en veille / pause",):
+        flags.append("aucune tâche ouverte : prochaine étape non planifiée")
         score += 10
-    elif since > STALE_DAYS:
-        flags.append(f"sans contact depuis {since} j")
-        score += min(25, (since - STALE_DAYS) + 10)
 
-    if not deal.next_action and not deal.next_action_date:
-        flags.append("aucune prochaine action planifiée")
-        score += 15
+    if not c.contacts:
+        flags.append("aucun contact enregistré")
+        score += 6
+    elif not any(ct.is_decision_maker for ct in c.contacts):
+        flags.append("aucun décideur identifié parmi les contacts")
+        score += 4
+    if c.contacts and not any(ct.has_mail or ct.has_phone for ct in c.contacts):
+        flags.append("contacts sans mail ni téléphone")
 
-    if deal.amount and max_amount:
-        score += 25 * deal.amount / max_amount
-
-    return Signals(deal, since, overdue, flags, round(min(score, 100), 1))
+    return Signals(c, since, len(open_tasks), len(overdue), max_over, flags, round(min(score, 100), 1))
 
 
-def analyze_all(deals: list[Deal], today: date) -> list[Signals]:
-    """Ne garde que les deals ouverts, triés par score décroissant."""
-    open_deals = [d for d in deals if not d.is_closed]
-    max_amount = max((d.amount or 0 for d in open_deals), default=0)
-    return sorted((analyze(d, today, max_amount) for d in open_deals), key=lambda s: -s.score)
+def analyze_all(companies: list[Company], today: date, owner: str | None = None) -> list[Signals]:
+    """Entreprises ouvertes (filtrables par responsable), triées par score décroissant."""
+    pool = [c for c in companies if not c.is_closed and (not owner or norm(owner) in norm(c.owner))]
+    return sorted((analyze(c, today) for c in pool), key=lambda s: -s.score)

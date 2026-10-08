@@ -1,0 +1,4 @@
+ID,ID entreprise,Nom de l'entreprise,Nom du contact,Rôle,Mail,Téléphone,Date d'ajout
+CTC-0001,ENT-0004,MIT Technology,Contact A,Directeur général,a@example.com,,07/08/2026
+CTC-0002,ENT-0005,Jant Tech,Contact B,CEO,b@example.com,770000000,07/08/2026
+CTC-0003,ENT-0001,Dakar Institute of technoloy,Contact C,Assistant,,,07/08/2026

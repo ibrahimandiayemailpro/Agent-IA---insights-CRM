@@ -1,15 +1,16 @@
-# Agent IA - Insights CRM
+# Agent IA - Insights CRM partenariats
 
-Lit un Google Sheet utilisé comme CRM et demande à Claude de produire une liste d'**actions prioritaires**.
+Lit le Google Sheet « CRM - partenariats » et demande à Claude de produire une liste d'**actions prioritaires**.
 
 ## Fonctionnement
 
-1. **Lecture** (`sheet.py`) : Google Sheet via compte de service, ou CSV local. Les colonnes sont reconnues par
-   alias FR/EN (Nom, Entreprise, Étape, Montant, Dernier contact, Prochaine action, Date prochaine action,
-   Responsable, Notes). Les autres colonnes sont transmises telles quelles.
-2. **Pré-analyse déterministe** (`scoring.py`) : retards, contacts froids (> 14 j), absence de prochaine action,
-   poids du montant. Les deals gagnés/perdus sont exclus.
-3. **Analyse par Claude** (`agent.py`) : sortie structurée (actions classées, risques, qualité des données).
+1. **Lecture** (`sheet.py`) : onglets `Pipeline`, `Tâches`, `Contacts`, `Notes`, reliés par l'ID entreprise
+   (`ENT-xxxx`). Les autres onglets (Accueil, formulaires, tableau de bord) sont ignorés.
+2. **Signaux déterministes** (`scoring.py`) : tâches « À faire » en retard ou imminentes, ancienneté de la dernière
+   note, absence de prochaine étape, contacts manquants ou sans décideur, poids du statut. Les entreprises dont le
+   statut est clos (`CLOSED_WORDS`) sont exclues.
+3. **Analyse par Claude** (`agent.py`) : reçoit les 40 entreprises les mieux classées (statut, tâches ouvertes,
+   contacts, 3 dernières notes, signaux) et renvoie des actions classées, des risques et des remarques sur la qualité des données.
 
 ## Installation
 
@@ -18,25 +19,33 @@ pip install -r requirements.txt
 export ANTHROPIC_API_KEY=...
 ```
 
-## Accès au Google Sheet
-
-1. Console Google Cloud : activer les APIs *Google Sheets* et *Google Drive*, créer un **compte de service**,
-   télécharger sa clé JSON (`~/.config/gspread/service_account.json` ou `--credentials`).
-2. Partager la feuille (lecture seule suffit) avec l'e-mail du compte de service.
-
 ## Utilisation
 
+Sans compte Google : dans le Sheet, *Fichier > Télécharger > Microsoft Excel (.xlsx)*, puis :
+
 ```bash
-python -m crm_agent --sheet "https://docs.google.com/spreadsheets/d/<ID>/edit" --worksheet "Pipeline"
-python -m crm_agent --csv examples/crm_exemple.csv --max-actions 5   # test sans Google
-python -m crm_agent --csv export.csv --json
+python -m crm_agent --xlsx "CRM - partenariats.xlsx"
+python -m crm_agent --xlsx crm.xlsx --owner Ibrahima --max-actions 5
+python -m crm_agent --csv-dir examples/crm          # jeu d'exemple
 ```
 
-Les alias de colonnes se règlent dans `ALIASES` (`crm_agent/sheet.py`) ; les mots désignant un deal clos dans `CLOSED_WORDS`.
+Directement sur le Sheet (compte de service Google Cloud avec les APIs Sheets et Drive activées, clé JSON dans
+`~/.config/gspread/service_account.json` ou `--credentials`, feuille partagée avec l'e-mail du compte de service) :
+
+```bash
+python -m crm_agent --sheet "https://docs.google.com/spreadsheets/d/<ID>/edit"
+```
+
+## À adapter
+
+- `CLOSED_WORDS` (`sheet.py`) : mots désignant une affaire terminée. Seuls « A contacter », « En veille / Pause » et
+  « En négociation » ont été vus ; ajoutez vos autres statuts.
+- `STATUS_WEIGHT` et `STALE_DAYS` (`scoring.py`) : importance de chaque étape, seuil de « contact froid ».
 
 ## Confidentialité
 
-Les lignes retenues (max 60, les plus prioritaires) sont envoyées à l'API Anthropic. N'exposez pas la clé du compte de service.
+Le contenu des entreprises retenues (dont les notes) est envoyé à l'API Anthropic. Les mails et téléphones ne sont
+pas transmis, seulement leur présence.
 
 ## Tests
 

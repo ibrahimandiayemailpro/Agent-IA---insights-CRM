@@ -6,7 +6,7 @@ from datetime import date
 
 from .agent import Briefing, build_briefing
 from .scoring import analyze_all
-from .sheet import load_csv, load_google_sheet
+from .sheet import load_csv_dir, load_google_sheet, load_xlsx
 
 ICONS = {"critique": "🔴", "haute": "🟠", "moyenne": "🟡"}
 
@@ -15,7 +15,7 @@ def render(b: Briefing) -> str:
     out = ["# Actions prioritaires CRM", "", b.summary, ""]
     for a in sorted(b.actions, key=lambda a: a.rank):
         out += [
-            f"## {a.rank}. {ICONS[a.priority]} {a.deal} (ligne {a.row}) - {a.deadline}",
+            f"## {a.rank}. {ICONS[a.priority]} {a.company} ({a.company_id}) - {a.deadline}",
             f"**Action :** {a.action}",
             f"**Pourquoi :** {a.why}",
             "",
@@ -30,19 +30,25 @@ def render(b: Briefing) -> str:
 def main() -> int:
     p = argparse.ArgumentParser(prog="crm_agent", description="Actions prioritaires à partir d'un CRM Google Sheet")
     src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--sheet", help="URL, ID ou titre du Google Sheet")
-    src.add_argument("--csv", help="Fichier CSV local (export du CRM)")
-    p.add_argument("--worksheet", help="Nom de l'onglet (défaut : premier)")
+    src.add_argument("--sheet", help="URL ou ID du Google Sheet (compte de service requis)")
+    src.add_argument("--xlsx", help="Export .xlsx du Sheet (Fichier > Télécharger), sans compte Google")
+    src.add_argument("--csv-dir", help="Dossier avec Pipeline.csv, Tâches.csv, Contacts.csv, Notes.csv")
     p.add_argument("--credentials", help="JSON du compte de service (défaut : ~/.config/gspread/service_account.json)")
+    p.add_argument("--owner", help="Ne garder que les entreprises dont la personne en charge correspond (ex. Ibrahima)")
     p.add_argument("--max-actions", type=int, default=7)
     p.add_argument("--json", action="store_true", help="Sortie JSON au lieu de Markdown")
     args = p.parse_args()
 
-    deals = load_csv(args.csv) if args.csv else load_google_sheet(args.sheet, args.worksheet, args.credentials)
+    if args.xlsx:
+        companies = load_xlsx(args.xlsx)
+    elif args.csv_dir:
+        companies = load_csv_dir(args.csv_dir)
+    else:
+        companies = load_google_sheet(args.sheet, args.credentials)
     today = date.today()
-    signals = analyze_all(deals, today)
+    signals = analyze_all(companies, today, args.owner)
     if not signals:
-        print("Aucune affaire ouverte trouvée dans la feuille.", file=sys.stderr)
+        print("Aucune entreprise ouverte trouvée dans la feuille.", file=sys.stderr)
         return 1
 
     briefing = build_briefing(signals, today, max_actions=args.max_actions)
