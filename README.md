@@ -36,6 +36,18 @@ Directement sur le Sheet (compte de service Google Cloud avec les APIs Sheets et
 python -m crm_agent --sheet "https://docs.google.com/spreadsheets/d/<ID>/edit"
 ```
 
+## Écrire les actions dans le Sheet
+
+```bash
+python -m crm_agent --sheet "<URL ou ID>" --owner Ibrahima --write-tab            # onglet « Actions prioritaires »
+python -m crm_agent --sheet "<URL ou ID>" --write-tab "Actions du lundi"
+```
+
+L'onglet est créé (ou vidé puis réécrit à chaque exécution) avec : résumé, tableau Rang / Priorité / ID / Entreprise /
+Action / Pourquoi / Échéance, risques et qualité des données. Aucun autre onglet n'est modifié.
+Le compte de service doit être **Éditeur** du Sheet (Lecteur ne suffit plus). Ne renommez pas l'onglet en y mettant
+vos propres notes : il est écrasé à chaque exécution.
+
 ## À adapter
 
 - `CLOSED_WORDS` (`sheet.py`) : mots désignant une affaire terminée. Seuls « A contacter », « En veille / Pause » et

@@ -28,3 +28,16 @@ def test_owner_filter_and_dates():
     assert analyze_all(load_csv_dir(DIR), TODAY, owner="Autre") == []
     assert len(analyze_all(load_csv_dir(DIR), TODAY, owner="ibrahima")) == 5
     assert parse_date("07/08/2026") == date(2026, 8, 7)
+
+
+def test_briefing_to_rows():
+    from crm_agent.agent import Action, Briefing
+    from crm_agent.output import HEADER, briefing_to_rows
+
+    b = Briefing(summary="Résumé.", risks=["Backlog"], data_quality_notes=[],
+                 actions=[Action(rank=2, company_id="ENT-2", company="B", priority="haute", action="x", why="y", deadline="d"),
+                          Action(rank=1, company_id="ENT-1", company="A", priority="critique", action="x", why="y", deadline="d")])
+    rows = briefing_to_rows(b, TODAY)
+    i = rows.index(HEADER)
+    assert rows[i + 1][2] == "ENT-1" and rows[i + 2][2] == "ENT-2"  # trié par rang
+    assert ["Risques"] in rows and ["Backlog"] in rows and ["Qualité des données"] not in rows

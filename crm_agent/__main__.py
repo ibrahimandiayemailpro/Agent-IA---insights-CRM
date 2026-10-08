@@ -36,8 +36,13 @@ def main() -> int:
     p.add_argument("--credentials", help="JSON du compte de service (défaut : ~/.config/gspread/service_account.json)")
     p.add_argument("--owner", help="Ne garder que les entreprises dont la personne en charge correspond (ex. Ibrahima)")
     p.add_argument("--max-actions", type=int, default=7)
+    p.add_argument("--write-tab", metavar="NOM", nargs="?", const="Actions prioritaires",
+                   help="Écrire les actions dans cet onglet du Sheet (créé ou remplacé ; requiert --sheet et un compte "
+                        "de service Éditeur). Défaut : « Actions prioritaires »")
     p.add_argument("--json", action="store_true", help="Sortie JSON au lieu de Markdown")
     args = p.parse_args()
+    if args.write_tab and not args.sheet:
+        p.error("--write-tab nécessite --sheet")
 
     if args.xlsx:
         companies = load_xlsx(args.xlsx)
@@ -52,6 +57,12 @@ def main() -> int:
         return 1
 
     briefing = build_briefing(signals, today, max_actions=args.max_actions)
+    if args.write_tab:
+        from .output import briefing_to_rows, write_tab
+
+        url = write_tab(args.sheet, args.credentials, args.write_tab, briefing_to_rows(briefing, today))
+        print(f"Actions écrites dans l'onglet « {args.write_tab} » : {url}")
+        return 0
     print(briefing.model_dump_json(indent=2) if args.json else render(briefing))
     return 0
 
