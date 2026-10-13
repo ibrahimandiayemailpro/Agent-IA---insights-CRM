@@ -1,6 +1,0 @@
-ID,ID entreprise,Nom de l'entreprise,Tâche,Type,Priorité,Date de création,Échéance,Statut,Date de réalisation,Notes,Personne en charge
-TSK-0001,ENT-0004,MIT Technology,Envoyer le mail d'approche,Email,Haute,07/08/2026,10/08/2026,Fait,07/08/2026,,Ibrahima
-TSK-0002,ENT-0004,MIT Technology,Relancer par téléphone,Appel,Normale,07/08/2026,14/08/2026,À faire,,,Ibrahima
-TSK-0003,ENT-0004,MIT Technology,Rédiger la proposition de partenariat,Document,Normale,07/08/2026,20/08/2026,Annulée,,,Ibrahima
-TSK-0004,ENT-0001,Dakar Institute of technoloy,Trouver les coordonnées,Recherche,Normale,07/08/2026,02/09/2026,À faire,,,Ibrahima
-TSK-0005,ENT-0099,Entreprise partenaire signée,Onboarding,Autre,Normale,07/08/2026,09/10/2026,À faire,,,Ibrahima
